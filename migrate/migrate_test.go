@@ -7,11 +7,11 @@ import (
 	"github.com/SanjayM-2002/prismo/schema"
 )
 
-func TestCreateTables(t *testing.T) {
+func TestTables(t *testing.T) {
 	tests := []struct {
 		name string
 		src  string
-		want []CreateTable
+		want []Table
 	}{
 		{
 			name: "no models",
@@ -27,7 +27,7 @@ func TestCreateTables(t *testing.T) {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 }`,
-			want: []CreateTable{{
+			want: []Table{{
 				Name: "User",
 				Columns: []Column{
 					{Name: "id", Type: schema.Int, AutoIncrement: true},
@@ -52,7 +52,7 @@ model Post {
   id    String @id
   title String
 }`,
-			want: []CreateTable{
+			want: []Table{
 				{
 					Name: "User",
 					Columns: []Column{
@@ -82,9 +82,9 @@ model Post {
 				t.Fatalf("Parse returned error: %v", err)
 			}
 
-			got := CreateTables(s)
+			got := Tables(s)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("CreateTables\n got: %+v\nwant: %+v", got, tt.want)
+				t.Errorf("Tables\n got: %+v\nwant: %+v", got, tt.want)
 			}
 		})
 	}

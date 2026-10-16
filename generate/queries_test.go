@@ -29,11 +29,13 @@ func TestQueriesUnusualNames(t *testing.T) {
 }
 
 model URL {
-  id    Int      @id
-  type  String   @unique
-  query String   @unique
-  c     Int      @unique
-  at    DateTime @unique
+  id     Int      @id
+  type   String   @unique
+  query  String   @unique
+  c      Int      @unique
+  at     DateTime @unique
+  in     String   @unique
+  update String?  @unique
 }
 `
 	s := parse(t, src)
@@ -50,6 +52,25 @@ model URL {
 		t.Fatal(err)
 	}
 	build(t, map[string][]byte{"models.go": models, "client.go": client, "queries.go": queries})
+}
+
+func TestQueriesUpdateNameClash(t *testing.T) {
+	src := `datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int     @id
+  name      String?
+  clearName Boolean
+}
+`
+	_, err := Queries(parse(t, src), "db", mysqlDialect)
+	want := "model User: fields name and clearName both generate the update field ClearName"
+	if err == nil || err.Error() != want {
+		t.Errorf("Queries error = %v, want %q", err, want)
+	}
 }
 
 func TestLowerName(t *testing.T) {
@@ -85,6 +106,9 @@ func TestParamName(t *testing.T) {
 		{in: "C", want: "cValue"},
 		{in: "Ctx", want: "ctxValue"},
 		{in: "Query", want: "queryValue"},
+		{in: "In", want: "inValue"},
+		{in: "Create", want: "createValue"},
+		{in: "Update", want: "updateValue"},
 	}
 
 	for _, tt := range tests {

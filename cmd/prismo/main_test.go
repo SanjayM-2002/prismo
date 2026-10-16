@@ -19,6 +19,11 @@ func TestRun(t *testing.T) {
 		{name: "help", args: []string{"help"}, wantCode: 0, wantStdout: "Usage:"},
 		{name: "help flag", args: []string{"--help"}, wantCode: 0, wantStdout: "Usage:"},
 		{name: "unknown command", args: []string{"nope"}, wantCode: 2, wantStderr: `unknown command "nope"`},
+		{name: "old push command is gone", args: []string{"push"}, wantCode: 2, wantStderr: `unknown command "push"`},
+		{name: "db without subcommand", args: []string{"db"}, wantCode: 2, wantStderr: "prismo db <command>"},
+		{name: "db help", args: []string{"db", "help"}, wantCode: 0, wantStdout: "prismo db <command>"},
+		{name: "unknown db command", args: []string{"db", "pull"}, wantCode: 2, wantStderr: `unknown db command "pull"`},
+		{name: "db push help", args: []string{"db", "push", "-h"}, wantCode: 0, wantStderr: "-schema"},
 	}
 
 	for _, tt := range tests {

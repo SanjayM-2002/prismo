@@ -28,12 +28,56 @@ import (
 	"github.com/SanjayM-2002/prismo/query"
 	"{{.Dialect.Import}}"
 )
+
+// statement is a query that can write its SQL.
+type statement interface {
+	SQL(d query.Dialect) (string, []any, error)
+}
+
+// execute runs q and returns how many rows it matched.
+func execute(ctx context.Context, db executor, q statement) (int64, error) {
+	text, args, err := q.SQL({{.Dialect.Name}}.Dialect{})
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.ExecContext(ctx, text, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
 {{range .Models}}{{$m := .}}
 var {{.Var}}Columns = []string{ {{- .Columns -}} }
 {{range .Unique}}
 // FindBy{{.Name}} returns the {{$m.Name}} with the given {{.Column}}, or ErrNotFound.
 func (c *{{$m.Name}}Client) FindBy{{.Name}}(ctx context.Context, {{.Param}} {{.Type}}) (*{{$m.Name}}, error) {
 	return c.findOne(ctx, query.Equal{Column: {{printf "%q" .Column}}, Value: {{.Param}}})
+}
+
+// UpdateBy{{.Name}} changes the {{$m.Name}} with the given {{.Column}} and returns it
+// as saved, or ErrNotFound.
+func (c *{{$m.Name}}Client) UpdateBy{{.Name}}(ctx context.Context, {{.Param}} {{.Type}}, in {{$m.Name}}Update) (*{{$m.Name}}, error) {
+	return c.update(ctx, query.Equal{Column: {{printf "%q" .Column}}, Value: {{.Param}}}, in)
+}
+
+// DeleteBy{{.Name}} deletes the {{$m.Name}} with the given {{.Column}} and returns it
+// as it was, or ErrNotFound.
+func (c *{{$m.Name}}Client) DeleteBy{{.Name}}(ctx context.Context, {{.Param}} {{.Type}}) (*{{$m.Name}}, error) {
+	return c.delete(ctx, query.Equal{Column: {{printf "%q" .Column}}, Value: {{.Param}}})
+}
+
+// UpsertBy{{.Name}} updates the {{$m.Name}} with the given {{.Column}}, or creates one
+// from create if there is none. It runs separate queries, so use it inside
+// Tx when other code may write the same row at the same time.
+func (c *{{$m.Name}}Client) UpsertBy{{.Name}}(ctx context.Context, {{.Param}} {{.Type}}, create {{$m.Name}}Create, update {{$m.Name}}Update) (*{{$m.Name}}, error) {
+	_, err := c.FindBy{{.Name}}(ctx, {{.Param}})
+	if errors.Is(err, ErrNotFound) {
+		return c.Create(ctx, create)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return c.UpdateBy{{.Name}}(ctx, {{.Param}}, update)
 }
 {{end}}
 // {{.Name}}Create holds the values for a new {{.Name}}. Pointer fields can be
@@ -84,14 +128,19 @@ type {{.Name}}Where struct {
 {{- end}}
 }
 
-// FindMany returns every {{.Name}} that matches where.
-func (c *{{.Name}}Client) FindMany(ctx context.Context, where {{.Name}}Where) ([]*{{.Name}}, error) {
-	q := query.Select{Table: {{printf "%q" .Table}}, Columns: {{.Var}}Columns}
+func (w {{.Name}}Where) conditions() []query.Equal {
+	var conds []query.Equal
 {{- range .Where}}
-	if where.{{.Name}} != nil {
-		q.Where = append(q.Where, query.Equal{Column: {{printf "%q" .Column}}, Value: *where.{{.Name}}})
+	if w.{{.Name}} != nil {
+		conds = append(conds, query.Equal{Column: {{printf "%q" .Column}}, Value: *w.{{.Name}}})
 	}
 {{- end}}
+	return conds
+}
+
+// FindMany returns every {{.Name}} that matches where.
+func (c *{{.Name}}Client) FindMany(ctx context.Context, where {{.Name}}Where) ([]*{{.Name}}, error) {
+	q := query.Select{Table: {{printf "%q" .Table}}, Columns: {{.Var}}Columns, Where: where.conditions()}
 	text, args, err := q.SQL({{$.Dialect.Name}}.Dialect{})
 	if err != nil {
 		return nil, fmt.Errorf("find many {{.Table}}: %w", err)
@@ -116,6 +165,98 @@ func (c *{{.Name}}Client) FindMany(ctx context.Context, where {{.Name}}Where) ([
 		return nil, fmt.Errorf("find many {{.Table}}: %w", err)
 	}
 	return list, nil
+}
+
+// Count returns how many {{.Name}} rows match where.
+func (c *{{.Name}}Client) Count(ctx context.Context, where {{.Name}}Where) (int64, error) {
+	q := query.Count{Table: {{printf "%q" .Table}}, Where: where.conditions()}
+	text, args, err := q.SQL({{$.Dialect.Name}}.Dialect{})
+	if err != nil {
+		return 0, fmt.Errorf("count {{.Table}}: %w", err)
+	}
+	var n int64
+	if err := c.db.QueryRowContext(ctx, text, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count {{.Table}}: %w", err)
+	}
+	return n, nil
+}
+
+// {{.Name}}Update holds new values for an update. Nil fields keep their
+// current value. A Clear field sets its column to NULL and wins over a value.
+type {{.Name}}Update struct {
+{{- range .Update}}
+	{{.Name}} {{.Type}}
+{{- if .Nullable}}
+	Clear{{.Name}} bool
+{{- end}}
+{{- end}}
+}
+
+func (in {{.Name}}Update) assignments() []query.Assign {
+	var set []query.Assign
+{{- range .Update}}
+{{- if .Nullable}}
+	if in.Clear{{.Name}} {
+		set = append(set, query.Assign{Column: {{printf "%q" .Column}}, Value: nil})
+	} else if in.{{.Name}} != nil {
+		set = append(set, query.Assign{Column: {{printf "%q" .Column}}, Value: *in.{{.Name}}})
+	}
+{{- else}}
+	if in.{{.Name}} != nil {
+		set = append(set, query.Assign{Column: {{printf "%q" .Column}}, Value: *in.{{.Name}}})
+	}
+{{- end}}
+{{- end}}
+	return set
+}
+
+// UpdateMany changes every {{.Name}} that matches where and returns how many matched.
+func (c *{{.Name}}Client) UpdateMany(ctx context.Context, where {{.Name}}Where, in {{.Name}}Update) (int64, error) {
+	set := in.assignments()
+	if len(set) == 0 {
+		return c.Count(ctx, where)
+	}
+	n, err := execute(ctx, c.db, query.Update{Table: {{printf "%q" .Table}}, Set: set, Where: where.conditions()})
+	if err != nil {
+		return 0, fmt.Errorf("update many {{.Table}}: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteMany deletes every {{.Name}} that matches where and returns how many it
+// deleted. An empty where deletes every row.
+func (c *{{.Name}}Client) DeleteMany(ctx context.Context, where {{.Name}}Where) (int64, error) {
+	n, err := execute(ctx, c.db, query.Delete{Table: {{printf "%q" .Table}}, Where: where.conditions()})
+	if err != nil {
+		return 0, fmt.Errorf("delete many {{.Table}}: %w", err)
+	}
+	return n, nil
+}
+
+func (c *{{.Name}}Client) update(ctx context.Context, where query.Equal, in {{.Name}}Update) (*{{.Name}}, error) {
+	row, err := c.findOne(ctx, where)
+	if err != nil {
+		return nil, err
+	}
+	if set := in.assignments(); len(set) > 0 {
+		q := query.Update{Table: {{printf "%q" .Table}}, Set: set, Where: []query.Equal{ {Column: {{printf "%q" .IDColumn}}, Value: row.{{.ID}}} }}
+		if _, err := execute(ctx, c.db, q); err != nil {
+			return nil, fmt.Errorf("update {{.Table}}: %w", err)
+		}
+	}
+	return c.FindBy{{.ID}}(ctx, row.{{.ID}})
+}
+
+func (c *{{.Name}}Client) delete(ctx context.Context, where query.Equal) (*{{.Name}}, error) {
+	row, err := c.findOne(ctx, where)
+	if err != nil {
+		return nil, err
+	}
+	q := query.Delete{Table: {{printf "%q" .Table}}, Where: []query.Equal{ {Column: {{printf "%q" .IDColumn}}, Value: row.{{.ID}}} }}
+	if _, err := execute(ctx, c.db, q); err != nil {
+		return nil, fmt.Errorf("delete {{.Table}}: %w", err)
+	}
+	return row, nil
 }
 
 func (c *{{.Name}}Client) findOne(ctx context.Context, where query.Equal) (*{{.Name}}, error) {
@@ -162,12 +303,21 @@ type queryModel struct {
 	// Scan is the list of Scan targets in column order: &row.ID, &row.Email.
 	Scan   string
 	Unique []uniqueField
-	// ID is the Go name of the @id field.
-	ID string
+	// ID is the Go name of the @id field, IDColumn its column.
+	ID       string
+	IDColumn string
 	// AutoID is true when the database assigns the id (autoincrement()).
 	AutoID bool
 	Create []createField
 	Where  []whereField
+	Update []updateField
+}
+
+type updateField struct {
+	Name     string
+	Column   string
+	Type     string
+	Nullable bool
 }
 
 type whereField struct {
@@ -210,6 +360,7 @@ func Queries(s *schema.Schema, pkg string, d Dialect) ([]byte, error) {
 
 			if f.ID {
 				qm.ID = goName(f.Name)
+				qm.IDColumn = f.Name
 				qm.AutoID = isAutoIncrement(f)
 			}
 			if !isAutoIncrement(f) {
@@ -228,6 +379,10 @@ func Queries(s *schema.Schema, pkg string, d Dialect) ([]byte, error) {
 			}
 
 			qm.Where = append(qm.Where, whereField{Name: goName(f.Name), Column: f.Name, Type: "*" + typ})
+			// The id identifies the row being updated, so it can't be changed.
+			if !f.ID {
+				qm.Update = append(qm.Update, updateField{Name: goName(f.Name), Column: f.Name, Type: "*" + typ, Nullable: f.Optional})
+			}
 
 			if !f.ID && !f.Unique {
 				continue
@@ -239,6 +394,9 @@ func Queries(s *schema.Schema, pkg string, d Dialect) ([]byte, error) {
 				Param:  paramName(goName(f.Name)),
 				Type:   typ,
 			})
+		}
+		if err := checkUpdateNames(m.Name, qm.Update); err != nil {
+			return nil, err
 		}
 		qm.Columns = strings.Join(columns, ", ")
 		qm.Scan = strings.Join(scan, ", ")
@@ -254,6 +412,25 @@ func Queries(s *schema.Schema, pkg string, d Dialect) ([]byte, error) {
 		return nil, fmt.Errorf("format generated queries: %w", err)
 	}
 	return src, nil
+}
+
+// checkUpdateNames returns an error if a field's name clashes with the
+// Clear field generated for another one: name and clearName both make ClearName.
+func checkUpdateNames(model string, fields []updateField) error {
+	owners := map[string]string{}
+	for _, f := range fields {
+		names := []string{f.Name}
+		if f.Nullable {
+			names = append(names, "Clear"+f.Name)
+		}
+		for _, name := range names {
+			if owner, ok := owners[name]; ok {
+				return fmt.Errorf("model %s: fields %s and %s both generate the update field %s", model, owner, f.Column, name)
+			}
+			owners[name] = f.Column
+		}
+	}
+	return nil
 }
 
 func isAutoIncrement(f schema.Field) bool {
@@ -293,7 +470,11 @@ func lowerName(name string) string {
 // Go keywords or the other names used in a generated method.
 func paramName(goFieldName string) string {
 	name := lowerName(goFieldName)
-	if token.IsKeyword(name) || name == "c" || name == "ctx" || name == "query" {
+	switch name {
+	case "c", "ctx", "query", "in", "create", "update":
+		return name + "Value"
+	}
+	if token.IsKeyword(name) {
 		return name + "Value"
 	}
 	return name

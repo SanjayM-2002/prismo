@@ -10,8 +10,8 @@ import (
 var reservedNames = []string{"Client", "Open", "NewClient", "ErrNotFound", "Ptr"}
 
 // modelSuffixes are added to a model's Go name to make the other top-level
-// names generated for it: User -> User, UserClient, UserCreate, UserWhere.
-var modelSuffixes = []string{"", "Client", "Create", "Where"}
+// names generated for it: User -> User, UserClient, UserCreate, UserWhere, UserUpdate.
+var modelSuffixes = []string{"", "Client", "Create", "Where", "Update"}
 
 // checkNames returns an error if two top-level names in the generated
 // package would clash.

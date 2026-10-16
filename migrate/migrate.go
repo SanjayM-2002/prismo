@@ -1,17 +1,20 @@
-// Package migrate turns a schema into database-neutral migration steps.
-// A dialect renders the steps as SQL.
+// Package migrate describes tables in a database-neutral way and the steps
+// that change them. A dialect renders the steps as SQL.
 package migrate
 
 import "github.com/SanjayM-2002/prismo/schema"
 
-// CreateTable is a step that creates one table.
-type CreateTable struct {
+// Table describes a table: what the schema wants, or what the database has.
+type Table struct {
 	Name    string
 	Columns []Column
 	// PrimaryKey is the name of the primary key column.
 	PrimaryKey string
 	// Unique lists the columns that get a unique index.
 	Unique []string
+	// HasRows is true when the table in the database holds at least one row.
+	// It is always false for tables built from the schema.
+	HasRows bool
 }
 
 // Column is a table column.
@@ -25,18 +28,23 @@ type Column struct {
 	Default *schema.Default
 }
 
-// CreateTables returns a CreateTable step for every model, in schema order.
-// The schema must already be validated.
-func CreateTables(s *schema.Schema) []CreateTable {
-	var tables []CreateTable
+// CreateTable is a step that creates one table.
+type CreateTable struct {
+	Table Table
+}
+
+// Tables returns the table every model needs, in schema order. The schema
+// must already be validated.
+func Tables(s *schema.Schema) []Table {
+	var tables []Table
 	for _, m := range s.Models {
-		tables = append(tables, createTable(m))
+		tables = append(tables, tableFor(m))
 	}
 	return tables
 }
 
-func createTable(m schema.Model) CreateTable {
-	t := CreateTable{Name: m.Name}
+func tableFor(m schema.Model) Table {
+	t := Table{Name: m.Name}
 	for _, f := range m.Fields {
 		col := Column{
 			Name:     f.Name,

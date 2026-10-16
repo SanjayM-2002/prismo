@@ -8,7 +8,7 @@ import (
 	driver "github.com/go-sql-driver/mysql"
 )
 
-func TestWithParseTime(t *testing.T) {
+func TestConnectionDSN(t *testing.T) {
 	tests := []struct {
 		name string
 		url  string
@@ -21,9 +21,9 @@ func TestWithParseTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dsn, err := withParseTime(tt.url)
+			dsn, err := connectionDSN(tt.url)
 			if err != nil {
-				t.Fatalf("withParseTime returned error: %v", err)
+				t.Fatalf("connectionDSN returned error: %v", err)
 			}
 
 			cfg, err := driver.ParseDSN(dsn)
@@ -33,6 +33,9 @@ func TestWithParseTime(t *testing.T) {
 			if !cfg.ParseTime {
 				t.Errorf("parseTime is off in %q", dsn)
 			}
+			if !cfg.ClientFoundRows {
+				t.Errorf("clientFoundRows is off in %q", dsn)
+			}
 			if cfg.DBName != "app" || cfg.User != "root" || cfg.Addr != "localhost:3306" {
 				t.Errorf("connection details changed: %q", dsn)
 			}
@@ -40,7 +43,7 @@ func TestWithParseTime(t *testing.T) {
 	}
 
 	t.Run("timeout survives", func(t *testing.T) {
-		dsn, err := withParseTime("root:pass@tcp(localhost:3306)/app?timeout=5s")
+		dsn, err := connectionDSN("root:pass@tcp(localhost:3306)/app?timeout=5s")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,8 +57,8 @@ func TestWithParseTime(t *testing.T) {
 	})
 }
 
-func TestWithParseTimeInvalidURL(t *testing.T) {
-	_, err := withParseTime("not a url")
+func TestConnectionDSNInvalidURL(t *testing.T) {
+	_, err := connectionDSN("not a url")
 	if err == nil || !strings.Contains(err.Error(), "invalid database url") {
 		t.Errorf("error = %v, want an invalid database url error", err)
 	}

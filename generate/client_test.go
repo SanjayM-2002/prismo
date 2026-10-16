@@ -93,6 +93,11 @@ func TestClientNameClash(t *testing.T) {
 			wantErr: "models User and UserWhere both generate the name UserWhere",
 		},
 		{
+			name:    "model name ending in Update",
+			models:  "model User {\n  id Int @id\n}\nmodel UserUpdate {\n  id Int @id\n}",
+			wantErr: "models User and UserUpdate both generate the name UserUpdate",
+		},
+		{
 			name:    "model named Ptr",
 			models:  "model Ptr {\n  id Int @id\n}",
 			wantErr: "model Ptr: generated name Ptr is reserved by the client",

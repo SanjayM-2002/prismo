@@ -28,12 +28,12 @@ func TestQuoteIdent(t *testing.T) {
 func TestCreateTable(t *testing.T) {
 	tests := []struct {
 		name  string
-		table migrate.CreateTable
+		table migrate.Table
 		want  string
 	}{
 		{
 			name: "all column options",
-			table: migrate.CreateTable{
+			table: migrate.Table{
 				Name: "User",
 				Columns: []migrate.Column{
 					{Name: "id", Type: schema.Int, AutoIncrement: true},
@@ -59,7 +59,7 @@ func TestCreateTable(t *testing.T) {
 		},
 		{
 			name: "no unique columns",
-			table: migrate.CreateTable{
+			table: migrate.Table{
 				Name:       "Post",
 				Columns:    []migrate.Column{{Name: "id", Type: schema.String}},
 				PrimaryKey: "id",
@@ -71,7 +71,7 @@ func TestCreateTable(t *testing.T) {
 		},
 		{
 			name: "several unique columns",
-			table: migrate.CreateTable{
+			table: migrate.Table{
 				Name: "User",
 				Columns: []migrate.Column{
 					{Name: "id", Type: schema.Int},
@@ -92,7 +92,7 @@ func TestCreateTable(t *testing.T) {
 		},
 		{
 			name: "string default is escaped",
-			table: migrate.CreateTable{
+			table: migrate.Table{
 				Name: "Note",
 				Columns: []migrate.Column{
 					{Name: "id", Type: schema.Int},
@@ -110,7 +110,7 @@ func TestCreateTable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Dialect{}.CreateTable(tt.table)
+			got, err := Dialect{}.CreateTable(migrate.CreateTable{Table: tt.table})
 			if err != nil {
 				t.Fatalf("CreateTable returned error: %v", err)
 			}
@@ -141,13 +141,96 @@ func TestCreateTableErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			table := migrate.CreateTable{Name: "T", Columns: []migrate.Column{tt.column}}
-			_, err := Dialect{}.CreateTable(table)
+			table := migrate.Table{Name: "T", Columns: []migrate.Column{tt.column}}
+			_, err := Dialect{}.CreateTable(migrate.CreateTable{Table: table})
 			if err == nil {
 				t.Fatalf("CreateTable returned no error, want %q", tt.wantErr)
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("CreateTable error = %q, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// otherStep is a step type the dialect doesn't know.
+type otherStep struct{}
+
+func (otherStep) Describe() string { return "other" }
+func (otherStep) Warning() string  { return "" }
+
+func TestSQL(t *testing.T) {
+	tests := []struct {
+		name    string
+		step    migrate.Step
+		want    string
+		wantErr string
+	}{
+		{
+			name: "create table",
+			step: migrate.CreateTable{Table: migrate.Table{Name: "Post", Columns: []migrate.Column{{Name: "id", Type: schema.Int}}, PrimaryKey: "id"}},
+			want: "CREATE TABLE `Post` (\n  `id` INT NOT NULL,\n  PRIMARY KEY (`id`)\n) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
+		},
+		{
+			name: "drop table",
+			step: migrate.DropTable{Name: "Old"},
+			want: "DROP TABLE `Old`;",
+		},
+		{
+			name: "add column",
+			step: migrate.AddColumn{Table: "User", Column: migrate.Column{Name: "age", Type: schema.Int, Default: &schema.Default{Kind: schema.DefaultNumber, Value: "0"}}},
+			want: "ALTER TABLE `User` ADD COLUMN `age` INT NOT NULL DEFAULT 0;",
+		},
+		{
+			name: "drop column",
+			step: migrate.DropColumn{Table: "User", Column: "age"},
+			want: "ALTER TABLE `User` DROP COLUMN `age`;",
+		},
+		{
+			name: "alter column",
+			step: migrate.AlterColumn{
+				Table: "User",
+				From:  migrate.Column{Name: "age", Type: schema.Int, Nullable: true},
+				To:    migrate.Column{Name: "age", Type: schema.Int, Default: &schema.Default{Kind: schema.DefaultNumber, Value: "18"}},
+			},
+			want: "ALTER TABLE `User` MODIFY COLUMN `age` INT NOT NULL DEFAULT 18;",
+		},
+		{
+			name: "add unique index",
+			step: migrate.AddUnique{Table: "User", Column: "email"},
+			want: "ALTER TABLE `User` ADD UNIQUE INDEX `User_email_key` (`email`);",
+		},
+		{
+			name: "drop unique index",
+			step: migrate.DropUnique{Table: "User", Column: "email"},
+			want: "ALTER TABLE `User` DROP INDEX `User_email_key`;",
+		},
+		{
+			name:    "add column with unsupported type",
+			step:    migrate.AddColumn{Table: "User", Column: migrate.Column{Name: "price", Type: schema.FieldType("Float")}},
+			wantErr: "table User: column price: unsupported type Float",
+		},
+		{
+			name:    "unknown step",
+			step:    otherStep{},
+			wantErr: "unsupported migration step mysql.otherStep",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Dialect{}.SQL(tt.step)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Errorf("SQL error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SQL returned error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("SQL\n got: %s\nwant: %s", got, tt.want)
 			}
 		})
 	}

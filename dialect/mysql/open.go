@@ -9,9 +9,11 @@ import (
 )
 
 // Open connects to the MySQL database at url and checks the connection.
-// It turns on parseTime so DATETIME columns scan into time.Time.
+// It turns on parseTime, so DATETIME columns scan into time.Time, and
+// clientFoundRows, so an UPDATE reports the rows it matched rather than only
+// the rows whose values changed.
 func Open(ctx context.Context, url string) (*sql.DB, error) {
-	dsn, err := withParseTime(url)
+	dsn, err := connectionDSN(url)
 	if err != nil {
 		return nil, err
 	}
@@ -28,11 +30,12 @@ func Open(ctx context.Context, url string) (*sql.DB, error) {
 	return db, nil
 }
 
-func withParseTime(url string) (string, error) {
+func connectionDSN(url string) (string, error) {
 	cfg, err := driver.ParseDSN(url)
 	if err != nil {
 		return "", fmt.Errorf("invalid database url: %w", err)
 	}
 	cfg.ParseTime = true
+	cfg.ClientFoundRows = true
 	return cfg.FormatDSN(), nil
 }

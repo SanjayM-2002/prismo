@@ -44,7 +44,7 @@ model User {
 		{
 			name:    "malformed url",
 			schema:  "datasource db {\n  provider = \"mysql\"\n  url = \"not a dsn\"\n}" + model,
-			wantErr: "open database: invalid DSN",
+			wantErr: "invalid database url: invalid DSN",
 		},
 	}
 
@@ -56,7 +56,7 @@ model User {
 			}
 
 			var stdout, stderr bytes.Buffer
-			code := run(context.Background(), []string{"push", "--schema", path}, &stdout, &stderr)
+			code := run(context.Background(), []string{"db", "push", "--schema", path}, &stdout, &stderr)
 
 			if code != 1 {
 				t.Errorf("exit code = %d, want 1", code)
@@ -72,7 +72,7 @@ func TestPushMissingSchemaFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.prismo")
 
 	var stdout, stderr bytes.Buffer
-	code := run(context.Background(), []string{"push", "--schema", path}, &stdout, &stderr)
+	code := run(context.Background(), []string{"db", "push", "--schema", path}, &stdout, &stderr)
 
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
@@ -84,7 +84,7 @@ func TestPushMissingSchemaFile(t *testing.T) {
 
 func TestPushHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run(context.Background(), []string{"push", "-h"}, &stdout, &stderr)
+	code := run(context.Background(), []string{"db", "push", "-h"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)

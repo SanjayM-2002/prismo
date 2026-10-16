@@ -158,3 +158,91 @@ func TestSQLErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteSQL(t *testing.T) {
+	tests := []struct {
+		name     string
+		dialect  query.Dialect
+		build    func(d query.Dialect) (string, []any, error)
+		wantSQL  string
+		wantArgs []any
+	}{
+		{
+			name:    "count all",
+			dialect: mysql.Dialect{},
+			build:   query.Count{Table: "User"}.SQL,
+			wantSQL: "SELECT COUNT(*) FROM `User`",
+		},
+		{
+			name:     "count with filter",
+			dialect:  mysql.Dialect{},
+			build:    query.Count{Table: "User", Where: []query.Equal{{Column: "active", Value: true}}}.SQL,
+			wantSQL:  "SELECT COUNT(*) FROM `User` WHERE `active` = ?",
+			wantArgs: []any{true},
+		},
+		{
+			name:    "update one row",
+			dialect: mysql.Dialect{},
+			build: query.Update{
+				Table: "User",
+				Set:   []query.Assign{{Column: "name", Value: "Sanjay"}, {Column: "age", Value: nil}},
+				Where: []query.Equal{{Column: "id", Value: 7}},
+			}.SQL,
+			wantSQL:  "UPDATE `User` SET `name` = ?, `age` = ? WHERE `id` = ?",
+			wantArgs: []any{"Sanjay", nil, 7},
+		},
+		{
+			name:    "update numbers placeholders across SET and WHERE",
+			dialect: numberedDialect{},
+			build: query.Update{
+				Table: "User",
+				Set:   []query.Assign{{Column: "name", Value: "Sanjay"}},
+				Where: []query.Equal{{Column: "id", Value: 7}, {Column: "active", Value: true}},
+			}.SQL,
+			wantSQL:  `UPDATE "User" SET "name" = $1 WHERE "id" = $2 AND "active" = $3`,
+			wantArgs: []any{"Sanjay", 7, true},
+		},
+		{
+			name:     "update every row",
+			dialect:  mysql.Dialect{},
+			build:    query.Update{Table: "User", Set: []query.Assign{{Column: "active", Value: false}}}.SQL,
+			wantSQL:  "UPDATE `User` SET `active` = ?",
+			wantArgs: []any{false},
+		},
+		{
+			name:     "delete one row",
+			dialect:  mysql.Dialect{},
+			build:    query.Delete{Table: "User", Where: []query.Equal{{Column: "id", Value: 7}}}.SQL,
+			wantSQL:  "DELETE FROM `User` WHERE `id` = ?",
+			wantArgs: []any{7},
+		},
+		{
+			name:    "delete every row",
+			dialect: mysql.Dialect{},
+			build:   query.Delete{Table: "User"}.SQL,
+			wantSQL: "DELETE FROM `User`",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sql, args, err := tt.build(tt.dialect)
+			if err != nil {
+				t.Fatalf("SQL returned error: %v", err)
+			}
+			if sql != tt.wantSQL {
+				t.Errorf("sql = %q, want %q", sql, tt.wantSQL)
+			}
+			if !reflect.DeepEqual(args, tt.wantArgs) {
+				t.Errorf("args = %v, want %v", args, tt.wantArgs)
+			}
+		})
+	}
+}
+
+func TestUpdateWithoutSet(t *testing.T) {
+	_, _, err := query.Update{Table: "User"}.SQL(mysql.Dialect{})
+	if err == nil || err.Error() != "update User: nothing to set" {
+		t.Errorf("error = %v, want %q", err, "update User: nothing to set")
+	}
+}

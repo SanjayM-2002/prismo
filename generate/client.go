@@ -27,6 +27,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 {{- if .URLEnv}}
 	"os"
 {{- end}}
@@ -39,10 +40,18 @@ var ErrNotFound = errors.New("not found")
 
 // Client gives access to the queries for every model.
 type Client struct {
+	// db is nil for the client a transaction hands to its function.
 	db *sql.DB
 {{- range .Models}}
 	{{.Name}} *{{.Name}}Client
 {{- end}}
+}
+
+// executor runs queries: a *sql.DB, or a *sql.Tx inside Tx.
+type executor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 {{if .URLEnv}}
 // Open connects to the database in the {{.URLEnv}} environment variable.
@@ -70,8 +79,13 @@ func Open(ctx context.Context) (*Client, error) {
 // NewClient wraps a connection pool you already have. Open it with
 // {{.Dialect.Name}}.Open so it has the settings the client needs.
 func NewClient(db *sql.DB) *Client {
+	c := newClient(db)
+	c.db = db
+	return c
+}
+
+func newClient(db executor) *Client {
 	return &Client{
-		db: db,
 {{- range .Models}}
 		{{.Name}}: &{{.Name}}Client{db: db},
 {{- end}}
@@ -80,7 +94,34 @@ func NewClient(db *sql.DB) *Client {
 
 // Close closes the connection pool.
 func (c *Client) Close() error {
+	if c.db == nil {
+		return errors.New("close: can't close the client inside a transaction")
+	}
 	return c.db.Close()
+}
+
+// Tx runs fn in a transaction and commits it if fn returns nil. If fn
+// returns an error or panics, everything fn did is rolled back. Run every
+// query inside the transaction through the client fn receives.
+func (c *Client) Tx(ctx context.Context, fn func(tx *Client) error) error {
+	if c.db == nil {
+		return errors.New("transaction: transactions can't be nested")
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	// Rollback after a successful Commit does nothing, so this only undoes
+	// the work when fn fails or panics.
+	defer tx.Rollback()
+
+	if err := fn(newClient(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
 }
 
 // Ptr returns a pointer to v, for setting optional fields: Name: Ptr("Sanjay").
@@ -90,7 +131,7 @@ func Ptr[T any](v T) *T {
 {{range .Models}}
 // {{.Name}}Client runs queries on the {{.Table}} table.
 type {{.Name}}Client struct {
-	db *sql.DB
+	db executor
 }
 {{end}}`))
 

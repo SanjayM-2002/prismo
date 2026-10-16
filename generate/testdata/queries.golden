@@ -13,6 +13,24 @@ import (
 	"github.com/SanjayM-2002/prismo/query"
 )
 
+// statement is a query that can write its SQL.
+type statement interface {
+	SQL(d query.Dialect) (string, []any, error)
+}
+
+// execute runs q and returns how many rows it matched.
+func execute(ctx context.Context, db executor, q statement) (int64, error) {
+	text, args, err := q.SQL(mysql.Dialect{})
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.ExecContext(ctx, text, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 var userColumns = []string{"id", "email", "name", "active", "age", "createdAt", "deletedAt", "avatarURL", "api_key"}
 
 // FindByID returns the User with the given id, or ErrNotFound.
@@ -20,9 +38,61 @@ func (c *UserClient) FindByID(ctx context.Context, id int) (*User, error) {
 	return c.findOne(ctx, query.Equal{Column: "id", Value: id})
 }
 
+// UpdateByID changes the User with the given id and returns it
+// as saved, or ErrNotFound.
+func (c *UserClient) UpdateByID(ctx context.Context, id int, in UserUpdate) (*User, error) {
+	return c.update(ctx, query.Equal{Column: "id", Value: id}, in)
+}
+
+// DeleteByID deletes the User with the given id and returns it
+// as it was, or ErrNotFound.
+func (c *UserClient) DeleteByID(ctx context.Context, id int) (*User, error) {
+	return c.delete(ctx, query.Equal{Column: "id", Value: id})
+}
+
+// UpsertByID updates the User with the given id, or creates one
+// from create if there is none. It runs separate queries, so use it inside
+// Tx when other code may write the same row at the same time.
+func (c *UserClient) UpsertByID(ctx context.Context, id int, create UserCreate, update UserUpdate) (*User, error) {
+	_, err := c.FindByID(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return c.Create(ctx, create)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return c.UpdateByID(ctx, id, update)
+}
+
 // FindByEmail returns the User with the given email, or ErrNotFound.
 func (c *UserClient) FindByEmail(ctx context.Context, email string) (*User, error) {
 	return c.findOne(ctx, query.Equal{Column: "email", Value: email})
+}
+
+// UpdateByEmail changes the User with the given email and returns it
+// as saved, or ErrNotFound.
+func (c *UserClient) UpdateByEmail(ctx context.Context, email string, in UserUpdate) (*User, error) {
+	return c.update(ctx, query.Equal{Column: "email", Value: email}, in)
+}
+
+// DeleteByEmail deletes the User with the given email and returns it
+// as it was, or ErrNotFound.
+func (c *UserClient) DeleteByEmail(ctx context.Context, email string) (*User, error) {
+	return c.delete(ctx, query.Equal{Column: "email", Value: email})
+}
+
+// UpsertByEmail updates the User with the given email, or creates one
+// from create if there is none. It runs separate queries, so use it inside
+// Tx when other code may write the same row at the same time.
+func (c *UserClient) UpsertByEmail(ctx context.Context, email string, create UserCreate, update UserUpdate) (*User, error) {
+	_, err := c.FindByEmail(ctx, email)
+	if errors.Is(err, ErrNotFound) {
+		return c.Create(ctx, create)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return c.UpdateByEmail(ctx, email, update)
 }
 
 // UserCreate holds the values for a new User. Pointer fields can be
@@ -91,36 +161,41 @@ type UserWhere struct {
 	APIKey    *string
 }
 
+func (w UserWhere) conditions() []query.Equal {
+	var conds []query.Equal
+	if w.ID != nil {
+		conds = append(conds, query.Equal{Column: "id", Value: *w.ID})
+	}
+	if w.Email != nil {
+		conds = append(conds, query.Equal{Column: "email", Value: *w.Email})
+	}
+	if w.Name != nil {
+		conds = append(conds, query.Equal{Column: "name", Value: *w.Name})
+	}
+	if w.Active != nil {
+		conds = append(conds, query.Equal{Column: "active", Value: *w.Active})
+	}
+	if w.Age != nil {
+		conds = append(conds, query.Equal{Column: "age", Value: *w.Age})
+	}
+	if w.CreatedAt != nil {
+		conds = append(conds, query.Equal{Column: "createdAt", Value: *w.CreatedAt})
+	}
+	if w.DeletedAt != nil {
+		conds = append(conds, query.Equal{Column: "deletedAt", Value: *w.DeletedAt})
+	}
+	if w.AvatarURL != nil {
+		conds = append(conds, query.Equal{Column: "avatarURL", Value: *w.AvatarURL})
+	}
+	if w.APIKey != nil {
+		conds = append(conds, query.Equal{Column: "api_key", Value: *w.APIKey})
+	}
+	return conds
+}
+
 // FindMany returns every User that matches where.
 func (c *UserClient) FindMany(ctx context.Context, where UserWhere) ([]*User, error) {
-	q := query.Select{Table: "User", Columns: userColumns}
-	if where.ID != nil {
-		q.Where = append(q.Where, query.Equal{Column: "id", Value: *where.ID})
-	}
-	if where.Email != nil {
-		q.Where = append(q.Where, query.Equal{Column: "email", Value: *where.Email})
-	}
-	if where.Name != nil {
-		q.Where = append(q.Where, query.Equal{Column: "name", Value: *where.Name})
-	}
-	if where.Active != nil {
-		q.Where = append(q.Where, query.Equal{Column: "active", Value: *where.Active})
-	}
-	if where.Age != nil {
-		q.Where = append(q.Where, query.Equal{Column: "age", Value: *where.Age})
-	}
-	if where.CreatedAt != nil {
-		q.Where = append(q.Where, query.Equal{Column: "createdAt", Value: *where.CreatedAt})
-	}
-	if where.DeletedAt != nil {
-		q.Where = append(q.Where, query.Equal{Column: "deletedAt", Value: *where.DeletedAt})
-	}
-	if where.AvatarURL != nil {
-		q.Where = append(q.Where, query.Equal{Column: "avatarURL", Value: *where.AvatarURL})
-	}
-	if where.APIKey != nil {
-		q.Where = append(q.Where, query.Equal{Column: "api_key", Value: *where.APIKey})
-	}
+	q := query.Select{Table: "User", Columns: userColumns, Where: where.conditions()}
 	text, args, err := q.SQL(mysql.Dialect{})
 	if err != nil {
 		return nil, fmt.Errorf("find many User: %w", err)
@@ -145,6 +220,123 @@ func (c *UserClient) FindMany(ctx context.Context, where UserWhere) ([]*User, er
 		return nil, fmt.Errorf("find many User: %w", err)
 	}
 	return list, nil
+}
+
+// Count returns how many User rows match where.
+func (c *UserClient) Count(ctx context.Context, where UserWhere) (int64, error) {
+	q := query.Count{Table: "User", Where: where.conditions()}
+	text, args, err := q.SQL(mysql.Dialect{})
+	if err != nil {
+		return 0, fmt.Errorf("count User: %w", err)
+	}
+	var n int64
+	if err := c.db.QueryRowContext(ctx, text, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count User: %w", err)
+	}
+	return n, nil
+}
+
+// UserUpdate holds new values for an update. Nil fields keep their
+// current value. A Clear field sets its column to NULL and wins over a value.
+type UserUpdate struct {
+	Email          *string
+	Name           *string
+	ClearName      bool
+	Active         *bool
+	Age            *int
+	ClearAge       bool
+	CreatedAt      *time.Time
+	DeletedAt      *time.Time
+	ClearDeletedAt bool
+	AvatarURL      *string
+	ClearAvatarURL bool
+	APIKey         *string
+}
+
+func (in UserUpdate) assignments() []query.Assign {
+	var set []query.Assign
+	if in.Email != nil {
+		set = append(set, query.Assign{Column: "email", Value: *in.Email})
+	}
+	if in.ClearName {
+		set = append(set, query.Assign{Column: "name", Value: nil})
+	} else if in.Name != nil {
+		set = append(set, query.Assign{Column: "name", Value: *in.Name})
+	}
+	if in.Active != nil {
+		set = append(set, query.Assign{Column: "active", Value: *in.Active})
+	}
+	if in.ClearAge {
+		set = append(set, query.Assign{Column: "age", Value: nil})
+	} else if in.Age != nil {
+		set = append(set, query.Assign{Column: "age", Value: *in.Age})
+	}
+	if in.CreatedAt != nil {
+		set = append(set, query.Assign{Column: "createdAt", Value: *in.CreatedAt})
+	}
+	if in.ClearDeletedAt {
+		set = append(set, query.Assign{Column: "deletedAt", Value: nil})
+	} else if in.DeletedAt != nil {
+		set = append(set, query.Assign{Column: "deletedAt", Value: *in.DeletedAt})
+	}
+	if in.ClearAvatarURL {
+		set = append(set, query.Assign{Column: "avatarURL", Value: nil})
+	} else if in.AvatarURL != nil {
+		set = append(set, query.Assign{Column: "avatarURL", Value: *in.AvatarURL})
+	}
+	if in.APIKey != nil {
+		set = append(set, query.Assign{Column: "api_key", Value: *in.APIKey})
+	}
+	return set
+}
+
+// UpdateMany changes every User that matches where and returns how many matched.
+func (c *UserClient) UpdateMany(ctx context.Context, where UserWhere, in UserUpdate) (int64, error) {
+	set := in.assignments()
+	if len(set) == 0 {
+		return c.Count(ctx, where)
+	}
+	n, err := execute(ctx, c.db, query.Update{Table: "User", Set: set, Where: where.conditions()})
+	if err != nil {
+		return 0, fmt.Errorf("update many User: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteMany deletes every User that matches where and returns how many it
+// deleted. An empty where deletes every row.
+func (c *UserClient) DeleteMany(ctx context.Context, where UserWhere) (int64, error) {
+	n, err := execute(ctx, c.db, query.Delete{Table: "User", Where: where.conditions()})
+	if err != nil {
+		return 0, fmt.Errorf("delete many User: %w", err)
+	}
+	return n, nil
+}
+
+func (c *UserClient) update(ctx context.Context, where query.Equal, in UserUpdate) (*User, error) {
+	row, err := c.findOne(ctx, where)
+	if err != nil {
+		return nil, err
+	}
+	if set := in.assignments(); len(set) > 0 {
+		q := query.Update{Table: "User", Set: set, Where: []query.Equal{{Column: "id", Value: row.ID}}}
+		if _, err := execute(ctx, c.db, q); err != nil {
+			return nil, fmt.Errorf("update User: %w", err)
+		}
+	}
+	return c.FindByID(ctx, row.ID)
+}
+
+func (c *UserClient) delete(ctx context.Context, where query.Equal) (*User, error) {
+	row, err := c.findOne(ctx, where)
+	if err != nil {
+		return nil, err
+	}
+	q := query.Delete{Table: "User", Where: []query.Equal{{Column: "id", Value: row.ID}}}
+	if _, err := execute(ctx, c.db, q); err != nil {
+		return nil, fmt.Errorf("delete User: %w", err)
+	}
+	return row, nil
 }
 
 func (c *UserClient) findOne(ctx context.Context, where query.Equal) (*User, error) {
@@ -178,6 +370,32 @@ var postColumns = []string{"id", "title", "authorId"}
 // FindByID returns the Post with the given id, or ErrNotFound.
 func (c *PostClient) FindByID(ctx context.Context, id int) (*Post, error) {
 	return c.findOne(ctx, query.Equal{Column: "id", Value: id})
+}
+
+// UpdateByID changes the Post with the given id and returns it
+// as saved, or ErrNotFound.
+func (c *PostClient) UpdateByID(ctx context.Context, id int, in PostUpdate) (*Post, error) {
+	return c.update(ctx, query.Equal{Column: "id", Value: id}, in)
+}
+
+// DeleteByID deletes the Post with the given id and returns it
+// as it was, or ErrNotFound.
+func (c *PostClient) DeleteByID(ctx context.Context, id int) (*Post, error) {
+	return c.delete(ctx, query.Equal{Column: "id", Value: id})
+}
+
+// UpsertByID updates the Post with the given id, or creates one
+// from create if there is none. It runs separate queries, so use it inside
+// Tx when other code may write the same row at the same time.
+func (c *PostClient) UpsertByID(ctx context.Context, id int, create PostCreate, update PostUpdate) (*Post, error) {
+	_, err := c.FindByID(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return c.Create(ctx, create)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return c.UpdateByID(ctx, id, update)
 }
 
 // PostCreate holds the values for a new Post. Pointer fields can be
@@ -216,18 +434,23 @@ type PostWhere struct {
 	AuthorID *int
 }
 
+func (w PostWhere) conditions() []query.Equal {
+	var conds []query.Equal
+	if w.ID != nil {
+		conds = append(conds, query.Equal{Column: "id", Value: *w.ID})
+	}
+	if w.Title != nil {
+		conds = append(conds, query.Equal{Column: "title", Value: *w.Title})
+	}
+	if w.AuthorID != nil {
+		conds = append(conds, query.Equal{Column: "authorId", Value: *w.AuthorID})
+	}
+	return conds
+}
+
 // FindMany returns every Post that matches where.
 func (c *PostClient) FindMany(ctx context.Context, where PostWhere) ([]*Post, error) {
-	q := query.Select{Table: "Post", Columns: postColumns}
-	if where.ID != nil {
-		q.Where = append(q.Where, query.Equal{Column: "id", Value: *where.ID})
-	}
-	if where.Title != nil {
-		q.Where = append(q.Where, query.Equal{Column: "title", Value: *where.Title})
-	}
-	if where.AuthorID != nil {
-		q.Where = append(q.Where, query.Equal{Column: "authorId", Value: *where.AuthorID})
-	}
+	q := query.Select{Table: "Post", Columns: postColumns, Where: where.conditions()}
 	text, args, err := q.SQL(mysql.Dialect{})
 	if err != nil {
 		return nil, fmt.Errorf("find many Post: %w", err)
@@ -252,6 +475,87 @@ func (c *PostClient) FindMany(ctx context.Context, where PostWhere) ([]*Post, er
 		return nil, fmt.Errorf("find many Post: %w", err)
 	}
 	return list, nil
+}
+
+// Count returns how many Post rows match where.
+func (c *PostClient) Count(ctx context.Context, where PostWhere) (int64, error) {
+	q := query.Count{Table: "Post", Where: where.conditions()}
+	text, args, err := q.SQL(mysql.Dialect{})
+	if err != nil {
+		return 0, fmt.Errorf("count Post: %w", err)
+	}
+	var n int64
+	if err := c.db.QueryRowContext(ctx, text, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count Post: %w", err)
+	}
+	return n, nil
+}
+
+// PostUpdate holds new values for an update. Nil fields keep their
+// current value. A Clear field sets its column to NULL and wins over a value.
+type PostUpdate struct {
+	Title    *string
+	AuthorID *int
+}
+
+func (in PostUpdate) assignments() []query.Assign {
+	var set []query.Assign
+	if in.Title != nil {
+		set = append(set, query.Assign{Column: "title", Value: *in.Title})
+	}
+	if in.AuthorID != nil {
+		set = append(set, query.Assign{Column: "authorId", Value: *in.AuthorID})
+	}
+	return set
+}
+
+// UpdateMany changes every Post that matches where and returns how many matched.
+func (c *PostClient) UpdateMany(ctx context.Context, where PostWhere, in PostUpdate) (int64, error) {
+	set := in.assignments()
+	if len(set) == 0 {
+		return c.Count(ctx, where)
+	}
+	n, err := execute(ctx, c.db, query.Update{Table: "Post", Set: set, Where: where.conditions()})
+	if err != nil {
+		return 0, fmt.Errorf("update many Post: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteMany deletes every Post that matches where and returns how many it
+// deleted. An empty where deletes every row.
+func (c *PostClient) DeleteMany(ctx context.Context, where PostWhere) (int64, error) {
+	n, err := execute(ctx, c.db, query.Delete{Table: "Post", Where: where.conditions()})
+	if err != nil {
+		return 0, fmt.Errorf("delete many Post: %w", err)
+	}
+	return n, nil
+}
+
+func (c *PostClient) update(ctx context.Context, where query.Equal, in PostUpdate) (*Post, error) {
+	row, err := c.findOne(ctx, where)
+	if err != nil {
+		return nil, err
+	}
+	if set := in.assignments(); len(set) > 0 {
+		q := query.Update{Table: "Post", Set: set, Where: []query.Equal{{Column: "id", Value: row.ID}}}
+		if _, err := execute(ctx, c.db, q); err != nil {
+			return nil, fmt.Errorf("update Post: %w", err)
+		}
+	}
+	return c.FindByID(ctx, row.ID)
+}
+
+func (c *PostClient) delete(ctx context.Context, where query.Equal) (*Post, error) {
+	row, err := c.findOne(ctx, where)
+	if err != nil {
+		return nil, err
+	}
+	q := query.Delete{Table: "Post", Where: []query.Equal{{Column: "id", Value: row.ID}}}
+	if _, err := execute(ctx, c.db, q); err != nil {
+		return nil, fmt.Errorf("delete Post: %w", err)
+	}
+	return row, nil
 }
 
 func (c *PostClient) findOne(ctx context.Context, where query.Equal) (*Post, error) {

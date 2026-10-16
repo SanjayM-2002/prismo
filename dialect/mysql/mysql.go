@@ -3,8 +3,6 @@
 package mysql
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
@@ -26,31 +24,41 @@ func (Dialect) Placeholder(n int) string {
 	return "?"
 }
 
-// TableNames returns the names of the tables in the connected database.
-func (Dialect) TableNames(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx,
-		"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'")
-	if err != nil {
-		return nil, fmt.Errorf("query tables: %w", err)
-	}
-	defer rows.Close()
-
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("scan table name: %w", err)
+// SQL returns the statement for one migration step.
+func (d Dialect) SQL(step migrate.Step) (string, error) {
+	switch step := step.(type) {
+	case migrate.CreateTable:
+		return d.CreateTable(step)
+	case migrate.DropTable:
+		return fmt.Sprintf("DROP TABLE %s;", d.QuoteIdent(step.Name)), nil
+	case migrate.AddColumn:
+		col, err := d.column(step.Column)
+		if err != nil {
+			return "", fmt.Errorf("table %s: %w", step.Table, err)
 		}
-		names = append(names, name)
+		return fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", d.QuoteIdent(step.Table), col), nil
+	case migrate.AlterColumn:
+		col, err := d.column(step.To)
+		if err != nil {
+			return "", fmt.Errorf("table %s: %w", step.Table, err)
+		}
+		return fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s;", d.QuoteIdent(step.Table), col), nil
+	case migrate.DropColumn:
+		return fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;", d.QuoteIdent(step.Table), d.QuoteIdent(step.Column)), nil
+	case migrate.AddUnique:
+		return fmt.Sprintf("ALTER TABLE %s ADD UNIQUE INDEX %s (%s);", d.QuoteIdent(step.Table),
+			d.QuoteIdent(uniqueIndexName(step.Table, step.Column)), d.QuoteIdent(step.Column)), nil
+	case migrate.DropUnique:
+		return fmt.Sprintf("ALTER TABLE %s DROP INDEX %s;", d.QuoteIdent(step.Table),
+			d.QuoteIdent(uniqueIndexName(step.Table, step.Column))), nil
+	default:
+		return "", fmt.Errorf("unsupported migration step %T", step)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read tables: %w", err)
-	}
-	return names, nil
 }
 
-// CreateTable returns the CREATE TABLE statement for t.
-func (d Dialect) CreateTable(t migrate.CreateTable) (string, error) {
+// CreateTable returns the CREATE TABLE statement for a step.
+func (d Dialect) CreateTable(step migrate.CreateTable) (string, error) {
+	t := step.Table
 	var lines []string
 
 	for _, c := range t.Columns {
@@ -66,13 +74,18 @@ func (d Dialect) CreateTable(t migrate.CreateTable) (string, error) {
 	}
 
 	for _, col := range t.Unique {
-		index := t.Name + "_" + col + "_key"
-		lines = append(lines, fmt.Sprintf("  UNIQUE INDEX %s (%s)", d.QuoteIdent(index), d.QuoteIdent(col)))
+		lines = append(lines, fmt.Sprintf("  UNIQUE INDEX %s (%s)", d.QuoteIdent(uniqueIndexName(t.Name, col)), d.QuoteIdent(col)))
 	}
 
 	sql := fmt.Sprintf("CREATE TABLE %s (\n%s\n) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
 		d.QuoteIdent(t.Name), strings.Join(lines, ",\n"))
 	return sql, nil
+}
+
+// uniqueIndexName names the unique index on one column the way Prisma does,
+// so prismo can find it again to drop it.
+func uniqueIndexName(table, column string) string {
+	return table + "_" + column + "_key"
 }
 
 func (d Dialect) column(c migrate.Column) (string, error) {

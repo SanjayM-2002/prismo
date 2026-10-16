@@ -35,7 +35,7 @@ func generateClient(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	d, err := clientDialectFor(s.Datasource.Provider)
+	p, err := providerFor(s.Datasource.Provider)
 	if err != nil {
 		return err
 	}
@@ -44,11 +44,11 @@ func generateClient(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	client, err := generate.Client(s, pkg, d)
+	client, err := generate.Client(s, pkg, p.client)
 	if err != nil {
 		return err
 	}
-	queries, err := generate.Queries(s, pkg, d)
+	queries, err := generate.Queries(s, pkg, p.client)
 	if err != nil {
 		return err
 	}
@@ -77,14 +77,4 @@ func generateClient(args []string, stdout, stderr io.Writer) error {
 			"use url = env(\"DATABASE_URL\") to keep it out of your code\n", filepath.Join(*out, "client.go"))
 	}
 	return nil
-}
-
-// clientDialectFor returns the runtime dialect package the generated client uses.
-func clientDialectFor(provider string) (generate.Dialect, error) {
-	switch provider {
-	case "mysql":
-		return generate.Dialect{Import: "github.com/SanjayM-2002/prismo/dialect/mysql", Name: "mysql"}, nil
-	default:
-		return generate.Dialect{}, fmt.Errorf("unsupported provider %q (supported: \"mysql\")", provider)
-	}
 }
